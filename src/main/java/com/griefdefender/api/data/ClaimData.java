@@ -33,6 +33,8 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.checkerframework.checker.nullness.qual.Nullable;
+
 /**
  * Represents the persisted data of a claim.
  */
@@ -73,6 +75,11 @@ public interface ClaimData {
      */
     Optional<Vector3i> getSpawnPos();
 
+    /**
+     * Gets the parent claim {@link UUID}.
+     * 
+     * @return The parent claim UUID, if available
+     */
     Optional<UUID> getParent();
 
     /** Gets the claim's world {@link UUID}.
@@ -313,9 +320,23 @@ public interface ClaimData {
     void setSpawnPos(Vector3i pos);
 
     /**
+     * Sets the spawn position of claim.
+     * 
+     * @param x X coordinate
+     * @param y Y coordinate
+     * @param z Z coordinate
+     */
+    void setSpawnPos(int x, int y, int z);
+
+    /**
      * Saves all changes to storage.
      */
     void save();
 
-    EconomyData getEconomyData();
+    /**
+     * Gets the economy data.
+     * 
+     * @return The economy data, if available
+     */
+    @Nullable EconomyData getEconomyData();
 }

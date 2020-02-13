@@ -58,4 +58,9 @@ public interface RemoveClaimEvent extends ClaimEvent, Cancellable {
      * Fired when a claim is deleted.
      */
     interface Delete extends RemoveClaimEvent {};
+
+    /**
+     * Fired when a claim has expired.
+     */
+    interface Expire extends RemoveClaimEvent {};
 }
