@@ -24,23 +24,24 @@
  */
 package com.griefdefender.api.event;
 
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.base.Preconditions.checkState;
-
 import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableList;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
-import java.util.NoSuchElementException;
+import java.util.ListIterator;
 import java.util.Optional;
 import java.util.StringJoiner;
+import java.util.concurrent.CopyOnWriteArrayList;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 
 /**
  * A cause represents the reason or initiator of an event.
@@ -76,7 +77,7 @@ public final class EventCause implements Iterable<Object> {
      */
     public static EventCause of(Object cause) {
         checkNotNull(cause, "Cause cannot be null!");
-        return new EventCause(new Object[] {cause});
+        return new EventCause(cause);
     }
 
     /**
@@ -87,12 +88,12 @@ public final class EventCause implements Iterable<Object> {
      * @return The built cause
      */
     public static EventCause of(Object cause, Object... causes) {
-        Builder builder = builder();
-        builder.append(cause);
-        for (Object namedCause : causes) {
-            builder.append(namedCause);
+        if (causes.length == 0) {
+            return of(cause);
         }
-        return builder.build();
+
+        CopyOnWriteArrayList<Object> causesList = new CopyOnWriteArrayList<>(causes);
+        return builder().appendAll(causesList).insert(0, cause).build();
     }
 
     /**
@@ -102,6 +103,16 @@ public final class EventCause implements Iterable<Object> {
      * @return The built cause
      */
     public static EventCause of(Iterable<Object> iterable) {
+        // Fast path
+        if (iterable instanceof EventCause) {
+            return new EventCause(new CopyOnWriteArrayList<>(((EventCause) iterable).cause));
+        }
+
+        // Another fast path
+        if (iterable instanceof CopyOnWriteArrayList || iterable instanceof ArrayList) {
+            return new EventCause(new CopyOnWriteArrayList<>((Collection<Object>) iterable));
+        }
+
         Builder builder = builder();
         for (Object cause : iterable) {
             builder.append(cause);
@@ -109,37 +120,27 @@ public final class EventCause implements Iterable<Object> {
         return builder.build();
     }
 
-    final Object[] cause;
-
-    // lazy load
-    @Nullable private ImmutableList<Object> immutableCauses;
+    final CopyOnWriteArrayList<Object> cause;
+    private final List<Object> immutableCauses;
 
     /**
      * Constructs a new cause.
      *
-     * @param ctx The event context
-     * @param causes The causes
+     * @param cause The causes list
      */
-    EventCause(Object[] causes) {
-        final Object[] objects = new Object[causes.length];
-        for (int index = 0; index < causes.length; index++) {
-            objects[index] = checkNotNull(causes[index], "Null cause element!");
-        }
-        this.cause = objects;
+    EventCause(CopyOnWriteArrayList<Object> cause) {
+        this.cause = cause;
+        this.immutableCauses = Collections.unmodifiableList(cause);
     }
 
     /**
      * Constructs a new cause.
      *
-     * @param causes The causes
+     * @param cause The cause
      */
-    EventCause(Collection<Object> causes) {
-        final Object[] objects = new Object[causes.size()];
-        int index = 0;
-        for (Object cause: causes) {
-            objects[index++] = checkNotNull(cause, "Null cause element!");
-        }
-        this.cause = objects;
+    EventCause(Object cause) {
+        this(new CopyOnWriteArrayList<>());
+        this.cause.add(cause);
     }
 
     /**
@@ -148,7 +149,7 @@ public final class EventCause implements Iterable<Object> {
      * @return The root object cause for this cause
      */
     public Object root() {
-        return this.cause[0];
+        return this.cause.get(0);
     }
 
     /**
@@ -176,9 +177,11 @@ public final class EventCause implements Iterable<Object> {
      * @return The last element of the type, if available
      */
     public <T> Optional<T> last(Class<T> target) {
-        for (int i = this.cause.length - 1; i >= 0; i--) {
-            if (target.isInstance(this.cause[i])) {
-                return Optional.of((T) this.cause[i]);
+        ListIterator<Object> iterator = this.cause.listIterator(this.cause.size());
+        while (iterator.hasPrevious()) {
+            Object c = iterator.previous();
+            if (target.isInstance(c)) {
+                return Optional.of((T) c);
             }
         }
         return Optional.empty();
@@ -193,14 +196,18 @@ public final class EventCause implements Iterable<Object> {
      */
     public Optional<?> before(Class<?> clazz) {
         checkArgument(clazz != null, "The provided class cannot be null!");
-        if (this.cause.length == 1) {
+        if (this.cause.size() == 1) {
             return Optional.empty();
         }
-        for (int i = 0; i < this.cause.length; i++) {
-            if (clazz.isInstance(this.cause[i]) && i > 0) {
-                return Optional.of(this.cause[i - 1]);
+
+        ListIterator<Object> iterator = this.cause.listIterator();
+        while (iterator.hasNext()) {
+            Object c = iterator.next();
+            if (clazz.isInstance(c) && iterator.hasPrevious()) {
+                return Optional.of(iterator.previous());
             }
         }
+
         return Optional.empty();
     }
 
@@ -213,14 +220,17 @@ public final class EventCause implements Iterable<Object> {
      */
     public Optional<?> after(Class<?> clazz) {
         checkArgument(clazz != null, "The provided class cannot be null!");
-        if (this.cause.length == 1) {
+        if (this.cause.size() == 1) {
             return Optional.empty();
         }
-        for (int i = 0; i < this.cause.length; i++) {
-            if (clazz.isInstance(this.cause[i]) && i + 1 < this.cause.length) {
-                return Optional.of(this.cause[i + 1]);
+
+        ListIterator<Object> iterator = this.cause.listIterator();
+        while (iterator.hasNext()) {
+            if (clazz.isInstance(iterator.next()) && iterator.hasNext()) {
+                return Optional.of(iterator.next());
             }
         }
+
         return Optional.empty();
     }
 
@@ -251,12 +261,7 @@ public final class EventCause implements Iterable<Object> {
      * @return True if the object is contained within this cause
      */
     public boolean contains(Object object) {
-        for (Object aCause : this.cause) {
-            if (aCause.equals(object)) {
-                return true;
-            }
-        }
-        return false;
+        return this.cause.contains(object);
     }
 
     /**
@@ -300,9 +305,6 @@ public final class EventCause implements Iterable<Object> {
      * @return An immutable list of all the causes
      */
     public List<Object> all() {
-        if (this.immutableCauses == null) {
-            this.immutableCauses = ImmutableList.copyOf(this.cause);
-        }
         return this.immutableCauses;
     }
 
@@ -315,9 +317,7 @@ public final class EventCause implements Iterable<Object> {
      */
     public EventCause with(Object additional) {
         checkNotNull(additional, "No null arguments allowed!");
-        List<Object> list = new ArrayList<>();
-        list.add(additional);
-        return with(list);
+        return builder().from(this).append(additional).build();
     }
 
     /**
@@ -330,13 +330,12 @@ public final class EventCause implements Iterable<Object> {
      */
     public EventCause with(Object additional, Object... additionals) {
         checkNotNull(additional, "No null arguments allowed!");
-        List<Object> list = new ArrayList<>();
-        list.add(additional);
-        for (Object object : additionals) {
-            checkNotNull(object, "Cannot add null objects!");
-            list.add(object);
+        EventCause.Builder builder = builder().from(this);
+        builder.causes.add(additional);
+        if (additionals.length > 0) {
+            builder.causes.addAll(Arrays.asList(additionals));
         }
-        return with(list);
+        return builder.build();
     }
 
     /**
@@ -363,22 +362,21 @@ public final class EventCause implements Iterable<Object> {
      */
     public EventCause with(EventCause cause) {
         EventCause.Builder builder = builder().from(this);
-        for (int i = 0; i < cause.cause.length; i++) {
-            builder.append(cause.cause[i]);
-        }
+        builder.causes.addAll(cause.cause);
         return builder.build();
     }
 
     @Override
     public Iterator<Object> iterator() {
-        return new Itr();
+        return this.cause.iterator();
     }
 
     @Override
     public boolean equals(@Nullable Object object) {
         if (object instanceof EventCause) {
             EventCause cause = ((EventCause) object);
-            return Arrays.equals(this.cause, cause.cause);
+            // TODO: expensive :(
+            return Arrays.equals(this.cause.toArray(), cause.cause.toArray());
         }
         return false;
     }
@@ -392,39 +390,24 @@ public final class EventCause implements Iterable<Object> {
     public String toString() {
         String causeString = "Cause[Stack={";
         StringJoiner joiner = new StringJoiner(", ");
-        for (int i = 0; i < this.cause.length; i++) {
-            joiner.add(this.cause[i].toString());
+        for (Object c : this.cause) {
+            joiner.add(c.toString());
         }
         return causeString + joiner.toString() + "}]";
     }
 
-    private class Itr implements Iterator<Object> {
-
-        private int index = 0;
-
-        Itr() { }
-
-        @Override
-        public Object next() {
-            if (this.index >= EventCause.this.cause.length) {
-                throw new NoSuchElementException();
-            }
-            return EventCause.this.cause[this.index++];
-        }
-
-        @Override
-        public boolean hasNext() {
-            return this.index != EventCause.this.cause.length;
-        }
-
-    }
-
     public static final class Builder {
 
-        final List<Object> causes = new ArrayList<>();
+        CopyOnWriteArrayList<Object> causes = null;
 
         Builder() {
 
+        }
+
+        private void initIfNeeded() {
+            if (causes == null) {
+                causes = new CopyOnWriteArrayList<>();
+            }
         }
 
         /**
@@ -435,6 +418,7 @@ public final class EventCause implements Iterable<Object> {
          */
         public Builder append(Object cause) {
             checkNotNull(cause, "Cause cannot be null!");
+            initIfNeeded();
             if (!this.causes.isEmpty() && this.causes.get(this.causes.size() - 1) == cause) {
                 return this;
             }
@@ -451,6 +435,7 @@ public final class EventCause implements Iterable<Object> {
          */
         public Builder insert(int position, Object cause) {
             checkNotNull(cause, "Cause cannot be null!");
+            initIfNeeded();
             this.causes.add(position, cause);
             return this;
         }
@@ -458,35 +443,41 @@ public final class EventCause implements Iterable<Object> {
         /**
          * Appends all specified objects onto the cause.
          *
-         * @param causes The objects to add onto the cause
+         * @param otherCauses The objects to add onto the cause
          * @return The modified builder, for chaining
          */
-        public Builder appendAll(Collection<Object> causes) {
-            checkNotNull(causes, "Causes cannot be null!");
-            causes.forEach(this::append);
+        public Builder appendAll(Collection<Object> otherCauses) {
+            checkNotNull(otherCauses, "Causes cannot be null!");
+            if (this.causes == null) {
+                this.causes = new CopyOnWriteArrayList<>(otherCauses);
+            } else {
+                initIfNeeded();
+                this.causes.addAll(otherCauses);
+            }
             return this;
         }
 
         /**
          * Constructs a new {@link EventCause} with information added to the builder.
          *
-         * @param ctx The context to build the cause with
          * @return The built cause
          */
         public EventCause build() {
-            checkState(!this.causes.isEmpty(), "Cannot create an empty Cause!");
+            checkState(this.causes != null && !this.causes.isEmpty(), "Cannot create an empty Cause!");
             return new EventCause(this.causes);
         }
 
         public Builder from(EventCause value) {
-            for (int i = 0; i < value.cause.length; i++) {
-                this.causes.add(value.cause[i]);
+            if (this.causes == null) {
+                this.causes = new CopyOnWriteArrayList<>(value.cause);
+            } else {
+                this.causes.addAll(value.cause);
             }
             return this;
         }
 
         public Builder reset() {
-            this.causes.clear();
+            this.causes = null;
             return this;
         }
     }
