@@ -373,10 +373,28 @@ public final class EventCause implements Iterable<Object> {
 
     @Override
     public boolean equals(@Nullable Object object) {
-        if (object instanceof EventCause) {
+        if (this == object) {
+            return true;
+        } else if (object instanceof EventCause) {
             EventCause cause = ((EventCause) object);
-            // TODO: expensive :(
-            return Arrays.equals(this.cause.toArray(), cause.cause.toArray());
+            // Probably doesn't happen
+            if (this.cause == cause.cause) {
+                return true;
+            }
+
+            // Compare sizes before comparing arrays
+            if (this.cause.size() != cause.cause.size()) {
+                return false;
+            }
+
+            int n = this.cause.size();
+            for (int i = 0; i < n; i++) {
+                if (!Objects.equal(this.cause.get(i), cause.cause.get(i))) {
+                    return false;
+                }
+            }
+
+            return true;
         }
         return false;
     }
